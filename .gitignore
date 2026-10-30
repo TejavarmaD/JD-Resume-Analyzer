@@ -1,0 +1,18 @@
+# Python environment
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Personal resume files
+*.pdf
+*.docx
+
+# Generated personal data
+extraction_results/
+structured_results/
+
+# IDE and OS
+.vscode/
+.DS_Store
+Thumbs.db
