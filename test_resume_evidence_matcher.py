@@ -1,23 +1,23 @@
 
 from resume_evidence_matcher import (
     evaluate_non_tag_requirement,
+    evaluate_requirement,
     apply_manual_evidence,
 )
-
 
 def test_req_068_monitoring_confirmation_does_not_satisfy_deployment():
     requirement = {
         "requirement_id": "REQ-068",
+        "requirement_text": "Monitoring and deployment of AI applications.",
+        "skill_tags": {},
     }
 
     # No resume evidence is available for either group.
-    evaluation = evaluate_non_tag_requirement(
-        requirement,
-        segments=[],
-    )
+    evaluation = evaluate_requirement(requirement, segments=[])
 
     manual_data = {
         "REQ-068": {
+            "requirement_text": "Monitoring and deployment of AI applications.",
             "status": "partial",
             "confirmation": (
                 "Monitoring and improvement of AI agents was confirmed. "
@@ -67,6 +67,7 @@ def test_req_068_monitoring_confirmation_does_not_satisfy_deployment():
 
 def test_req_031_partial_manual_confirmation_does_not_become_matched():
     evaluation = {
+        "requirement_text": "Provide technical documentation, participate in code reviews and technical discussions.",
         "status": "missing",
         "status_reason": "No evidence found.",
         "evidence_strength": "none",
@@ -86,6 +87,7 @@ def test_req_031_partial_manual_confirmation_does_not_become_matched():
 
     manual_data = {
         "REQ-031": {
+            "requirement_text": "Provide technical documentation, participate in code reviews and technical discussions.",
             "status": "partial",
             "confirmation": (
                 "Technical documentation confirmed. "
@@ -113,6 +115,7 @@ def test_req_031_partial_manual_confirmation_does_not_become_matched():
 
 def test_req_035_missing_manual_confirmation_does_not_satisfy_requirement():
     evaluation = {
+        "requirement_text": "Integrate external LLM APIs into personal applications.",
         "status": "partial",
         "status_reason": "LLM evidence found, API integration not established.",
         "evidence_strength": "partial",
@@ -122,6 +125,7 @@ def test_req_035_missing_manual_confirmation_does_not_satisfy_requirement():
 
     manual_data = {
         "REQ-035": {
+            "requirement_text": "Integrate external LLM APIs into personal applications.",
             "status": "missing",
             "confirmation": (
                 "Used the Omni AI interface. External LLM API integration "
@@ -149,6 +153,7 @@ def test_req_035_missing_manual_confirmation_does_not_satisfy_requirement():
 
 def test_req_058_matched_manual_confirmation_is_separate_from_resume_evidence():
     evaluation = {
+        "requirement_text": "Analyze data and investigate business problems.",
         "status": "missing",
         "status_reason": "No evidence found.",
         "evidence_strength": "none",
@@ -158,6 +163,7 @@ def test_req_058_matched_manual_confirmation_is_separate_from_resume_evidence():
 
     manual_data = {
         "REQ-058": {
+            "requirement_text": "Analyze data and investigate business problems.",
             "status": "matched",
             "confirmation": "Revenue Insights project details were confirmed.",
             "evidence": [
@@ -188,6 +194,7 @@ def test_req_058_matched_manual_confirmation_is_separate_from_resume_evidence():
 
 def test_manual_evidence_without_group_applies_to_single_group_only():
     evaluation = {
+        "requirement_text": "Provide technical documentation.",
         "status": "missing",
         "status_reason": "No evidence found.",
         "evidence_strength": "none",
@@ -207,6 +214,7 @@ def test_manual_evidence_without_group_applies_to_single_group_only():
 
     manual_data = {
         "REQ-031": {
+            "requirement_text": "Provide technical documentation.",
             "status": "matched",
             "confirmation": "Technical documentation confirmed.",
             "evidence": [
@@ -228,8 +236,70 @@ def test_manual_evidence_without_group_applies_to_single_group_only():
     assert group["status"] == "matched"
     assert group["manual_evidence_count"] == 1
 
+def test_live_router_preserves_req_068_manual_evidence_groups():
+    requirement = {
+        "requirement_id": "REQ-068",
+        "requirement_text": "Monitoring and deployment of AI applications.",
+        "skill_tags": {},
+        "alternatives": [],
+        "unmatched_terms": [],
+    }
+
+    manual_data = {
+        "REQ-068": {
+            "requirement_text": "Monitoring and deployment of AI applications.",
+            "status": "partial",
+            "confirmation": "Monitoring experience confirmed.",
+            "evidence": [
+                {
+                    "project": "Omni AI agents",
+                    "claim": "Monitored and improved the AI agents.",
+                    "evidence_group": "application monitoring",
+                }
+            ],
+        }
+    }
+
+    evaluation = evaluate_requirement(
+        requirement,
+        segments=[],
+    )
+
+    labels = {
+        group["label"]
+        for group in evaluation["evidence_groups"]
+    }
+
+    assert labels == {
+        "application deployment",
+        "application monitoring",
+    }
+
+    result = apply_manual_evidence(
+        evaluation,
+        "REQ-068",
+        manual_data,
+    )
+
+    monitoring_group = next(
+        group
+        for group in result["evidence_groups"]
+        if group["label"] == "application monitoring"
+    )
+
+    deployment_group = next(
+        group
+        for group in result["evidence_groups"]
+        if group["label"] == "application deployment"
+    )
+
+    assert monitoring_group["status"] == "matched"
+    assert deployment_group["status"] == "missing"
+    assert result["status"] == "partial"
+
 def test_missing_manual_confirmation_does_not_satisfy_single_evidence_group():
     evaluation = {
+        "requirement_text": "Integrate external model APIs into an application.",
         "status": "partial",
         "status_reason": "Related LLM evidence found, API integration not established.",
         "evidence_strength": "partial",
@@ -238,7 +308,7 @@ def test_missing_manual_confirmation_does_not_satisfy_single_evidence_group():
                 "label": "Integrate external model APIs",
                 "status": "partial",
                 "satisfied": False,
-                "evidence_count": 1,
+                "evidence_count": 2,
                 "evidence": [
                     {"claim": "Developed AI agents on an internal LLM platform."}
                 ],
@@ -253,6 +323,7 @@ def test_missing_manual_confirmation_does_not_satisfy_single_evidence_group():
 
     manual_data = {
         "TEST-API-001": {
+            "requirement_text": "Integrate external model APIs into an application.",
             "status": "missing",
             "confirmation": "External API integration was not confirmed.",
             "evidence": [
@@ -276,3 +347,52 @@ def test_missing_manual_confirmation_does_not_satisfy_single_evidence_group():
     assert result["evidence_groups"][0]["manual_evidence"] == []
     assert len(result["manual_evidence"]) == 1
 
+def test_manual_evidence_with_mismatched_requirement_text_is_rejected():
+    evaluation = {
+        "requirement_text": "Develop and maintain financial forecasts.",
+        "status": "missing",
+        "evidence": [],
+    }
+    manual_data = {
+        "REQ-010": {
+            "requirement_text": "Prepare monthly financial forecasts.",
+            "status": "matched",
+            "confirmation": "Confirmed experience preparing forecasts.",
+            "evidence": [{"claim": "Prepared monthly forecasts."}],
+        }
+    }
+
+    result = apply_manual_evidence(evaluation, "REQ-010", manual_data)
+
+    assert result["status"] == "missing"
+    assert result["resume_status"] == "missing"
+    assert result["manual_status"] is None
+    assert result["manual_evidence"] == []
+    assert result["manual_confirmation"] is None
+    assert result["manual_evidence_validation"] == "requirement_text_mismatch"
+    assert "was not applied" in result["manual_evidence_warning"]
+
+
+def test_legacy_manual_evidence_without_requirement_text_is_rejected():
+    evaluation = {
+        "requirement_text": "Prepare monthly financial forecasts.",
+        "status": "partial",
+        "evidence": [],
+    }
+    manual_data = {
+        "REQ-010": {
+            "status": "matched",
+            "confirmation": "Legacy confirmation without bound requirement text.",
+            "evidence": [{"claim": "Prepared forecasts."}],
+        }
+    }
+
+    result = apply_manual_evidence(evaluation, "REQ-010", manual_data)
+
+    assert result["status"] == "partial"
+    assert result["resume_status"] == "partial"
+    assert result["manual_status"] is None
+    assert result["manual_evidence"] == []
+    assert result["manual_confirmation"] is None
+    assert result["manual_evidence_validation"] == "legacy_unbound"
+    assert "was not applied" in result["manual_evidence_warning"]

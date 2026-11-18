@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from skill_tag_dictionary import SKILL_DICTIONARY, DICTIONARY_VERSION
+from requirement_rule_selector import select_requirement_strategy
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -348,6 +349,11 @@ NON_TAG_EVIDENCE_RULES = {
     },
 }
 
+# Configurations are indexed by reusable strategy, not generated JD IDs.
+NON_TAG_EVIDENCE_RULES = {
+    rule["method"]: rule for rule in NON_TAG_EVIDENCE_RULES.values()
+}
+
 
 # ---------------------------------------------------------
 # SPECIAL REQUIREMENT RULES
@@ -366,7 +372,7 @@ SPECIAL_REQUIREMENT_RULES = {
         ],
     },
     "REQ-038": {
-        "method": "working_llm_application_evidence",
+        "method": "explicit_llm_application_phrase_evidence",
         "phrases": [
             "built an LLM-powered application",
             "developed an LLM-powered application",
@@ -400,6 +406,10 @@ SPECIAL_REQUIREMENT_RULES = {
             "validated model responses",
         ],
     },
+}
+
+SPECIAL_REQUIREMENT_RULES = {
+    rule["method"]: rule for rule in SPECIAL_REQUIREMENT_RULES.values()
 }
 
 
@@ -457,6 +467,10 @@ REQUIREMENT_TAG_POLICIES = {
             "PROJECT WORK",
         ],
     },
+}
+
+REQUIREMENT_TAG_POLICIES = {
+    rule["method"]: rule for rule in REQUIREMENT_TAG_POLICIES.values()
 }
 
 
@@ -844,10 +858,8 @@ def get_requirement_tags(requirement):
 # SPECIAL REQUIREMENT EVALUATION
 # ---------------------------------------------------------
 
-def evaluate_special_requirement(requirement, segments):
-    """Apply strict special rules for selected requirements."""
-    requirement_id = requirement.get("requirement_id")
-    rule = SPECIAL_REQUIREMENT_RULES.get(requirement_id)
+def evaluate_special_requirement(requirement, segments, rule=None):
+    """Apply a selected strict rule; selection is external and ID-independent."""
 
     if not rule:
         return None
@@ -1211,27 +1223,25 @@ def evaluate_llm_use_case_policy(policy, segments):
         "evidence": [],
     }
 
-def evaluate_requirement_tag_policy(requirement, segments):
-    """Apply requirement-specific evidence rules."""
-    requirement_id = requirement.get("requirement_id")
-    policy = REQUIREMENT_TAG_POLICIES.get(requirement_id)
+def evaluate_requirement_tag_policy(requirement, segments, policy=None):
+    """Apply a selected tag policy; selection is external and ID-independent."""
 
     if not policy:
         return None
 
-    if requirement_id == "REQ-002":
+    if policy["method"] == "model_api_integration_evidence":
         return evaluate_model_api_integration_policy(
             policy,
             segments,
         )
 
-    if requirement_id == "REQ-004":
+    if policy["method"] == "implemented_llm_use_case_evidence":
         return evaluate_llm_use_case_policy(
             policy,
             segments,
         )
 
-    if requirement_id == "REQ-032":
+    if policy["method"] == "python_proficiency_evidence":
         evidence = find_phrase_evidence(
             policy["phrases"],
             segments,
@@ -1275,7 +1285,7 @@ def evaluate_requirement_tag_policy(requirement, segments):
             "evidence": python_evidence,
         }
 
-    if requirement_id == "REQ-048":
+    if policy["method"] == "working_llm_application_evidence":
         return evaluate_llm_application_policy(
             policy,
             segments,
@@ -1452,11 +1462,8 @@ def evaluate_tag_requirement(requirement, segments):
 # ---------------------------------------------------------
 
 
-def evaluate_non_tag_requirement(requirement, segments):
-    """Evaluate requirements and preserve group-level evidence status."""
-    rule = NON_TAG_EVIDENCE_RULES.get(
-        requirement.get("requirement_id")
-    )
+def evaluate_non_tag_requirement(requirement, segments, rule=None):
+    """Evaluate a selected group rule and preserve group-level evidence status."""
 
     if not rule:
         return {
@@ -1705,9 +1712,13 @@ def find_clause_evidence(clause, segments):
 
     results = []
 
-    minimum_overlap = max(
-        2,
-        int(len(clause_terms) * 0.35 + 0.999),
+    minimum_overlap = (
+        1
+        if len(clause_terms) == 1
+        else max(
+            2,
+            int(len(clause_terms) * 0.35 + 0.999),
+        )
     )
 
     for segment in segments:
@@ -1986,19 +1997,54 @@ def evaluate_generic_requirement(requirement, segments):
 
 
 
-def evaluate_requirement(requirement, segments):
-    """
-    Use one role-agnostic evaluator for every live requirement.
-    Requirement IDs are identifiers, not evaluation instructions.
-    """
-    evaluation = evaluate_generic_requirement(
-        requirement,
-        segments,
+def _find_rule_by_method(rule_registry, method):
+    """Resolve a reusable configured rule by strategy, never by requirement ID."""
+    return next(
+        (rule for rule in rule_registry.values() if rule.get("method") == method),
+        None,
     )
 
+
+def evaluate_requirement(requirement, segments):
+    """
+    Select an evidence strategy from requirement wording and extracted tags.
+    IDs are retained only as output identifiers and are never routing signals.
+    """
+    requirement_id = requirement.get("requirement_id")
+    selection = select_requirement_strategy(requirement)
+    strategy = selection["strategy"]
+    evaluation = None
+
+    special_rule = _find_rule_by_method(SPECIAL_REQUIREMENT_RULES, strategy)
+    if special_rule:
+        evaluation = evaluate_special_requirement(
+            requirement, segments, rule=special_rule
+        )
+
+    if evaluation is None:
+        tag_policy = _find_rule_by_method(REQUIREMENT_TAG_POLICIES, strategy)
+        if tag_policy:
+            evaluation = evaluate_requirement_tag_policy(
+                requirement, segments, policy=tag_policy
+            )
+
+    if evaluation is None:
+        non_tag_rule = _find_rule_by_method(NON_TAG_EVIDENCE_RULES, strategy)
+        if non_tag_rule:
+            evaluation = evaluate_non_tag_requirement(
+                requirement, segments, rule=non_tag_rule
+            )
+
+    if evaluation is None:
+        evaluation = evaluate_generic_requirement(requirement, segments)
+
     return {
-        "requirement_id": requirement.get("requirement_id"),
+        "requirement_id": requirement_id,
         "requirement_text": requirement.get("requirement_text"),
+        "rule_selection": {
+            "strategy": strategy,
+            "matched_by": selection["matched_by"],
+        },
         **evaluation,
         "unmatched_jd_terms_for_review": requirement.get(
             "unmatched_terms",
@@ -2007,8 +2053,6 @@ def evaluate_requirement(requirement, segments):
     }
 
 
-
-# ---------------------------------------------------------
 # USER-CONFIRMED EVIDENCE
 # ---------------------------------------------------------
 
@@ -2026,11 +2070,14 @@ def load_manual_evidence():
 
 
 
+
 def apply_manual_evidence(evaluation, requirement_id, manual_data):
     """
     Combine user-confirmed evidence with resume evaluation.
-    Keep manual evidence separate from resume quotations.
-    Support evidence-group-level manual confirmations.
+
+    Manual evidence is applied only when its stored requirement text
+    matches the current requirement text. Requirement IDs alone are
+    not treated as stable identities.
     """
     manual_record = manual_data.get(requirement_id)
 
@@ -2039,7 +2086,38 @@ def apply_manual_evidence(evaluation, requirement_id, manual_data):
         evaluation["manual_status"] = None
         evaluation["manual_evidence"] = []
         evaluation["manual_confirmation"] = None
+        evaluation["manual_evidence_validation"] = "not_found"
         return evaluation
+
+    current_text = " ".join(
+        str(evaluation.get("requirement_text", "")).split()
+    ).casefold()
+
+    stored_text = " ".join(
+        str(manual_record.get("requirement_text", "")).split()
+    ).casefold()
+
+    if not stored_text:
+        validation_status = "legacy_unbound"
+    elif not current_text or stored_text != current_text:
+        validation_status = "requirement_text_mismatch"
+    else:
+        validation_status = "validated"
+
+    if validation_status != "validated":
+        evaluation["resume_status"] = evaluation["status"]
+        evaluation["manual_status"] = None
+        evaluation["manual_evidence"] = []
+        evaluation["manual_confirmation"] = None
+        evaluation["manual_evidence_validation"] = validation_status
+        evaluation["manual_evidence_warning"] = (
+            "Manual evidence was not applied because its stored "
+            "requirement text is missing or does not match the "
+            "current requirement."
+        )
+        return evaluation
+
+    evaluation["manual_evidence_validation"] = "validated"
 
     manual_status = manual_record.get("status")
 
@@ -2074,9 +2152,6 @@ def apply_manual_evidence(evaluation, requirement_id, manual_data):
             for group in evidence_groups
         }
 
-        # Apply evidence only to the group explicitly identified.
-        # Apply manual evidence only to its explicitly identified group.
-                # Apply manual evidence only to its explicitly identified group.
         for item in (
             manual_items if manual_status != "missing" else []
         ):
@@ -2104,8 +2179,6 @@ def apply_manual_evidence(evaluation, requirement_id, manual_data):
                 group["manual_evidence"]
             )
 
-            # Explicit group evidence satisfies that group.
-            # Single-group fallback respects partial confirmation.
             if explicit_group_label:
                 group["status"] = "matched"
                 group["satisfied"] = True
@@ -2118,8 +2191,6 @@ def apply_manual_evidence(evaluation, requirement_id, manual_data):
                 group["status"] = "matched"
                 group["satisfied"] = True
 
-        # For a single-group requirement, a manual partial confirmation
-        # can establish partial support even without a specific evidence item.
         if (
             len(evidence_groups) == 1
             and manual_status == "partial"
@@ -2173,8 +2244,6 @@ def apply_manual_evidence(evaluation, requirement_id, manual_data):
             evaluation["status"] = resume_status
 
     else:
-        # Preserve manual confirmation behavior for requirements
-        # that do not use evidence groups.
         if manual_status == "matched":
             evaluation["status"] = "matched"
             evaluation["status_reason"] = (

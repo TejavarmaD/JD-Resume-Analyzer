@@ -1,5 +1,5 @@
 
-from resume_evidence_matcher import evaluate_requirement
+from resume_evidence_matcher import evaluate_requirement, find_clause_evidence
 
 
 def make_segment(text, section="WORK EXPERIENCE"):
@@ -149,3 +149,30 @@ def test_evidence_retains_original_source_and_offsets():
 
         assert item["source_text"] == source
         assert source[start:end] == item["matched_text"]
+
+def test_single_term_requirement_matches_lexical_evidence():
+    requirement = make_requirement("Python")
+
+    segments = [
+        make_segment(
+            "Built Python applications and automated data processing."
+        )
+    ]
+
+    result = evaluate_requirement(requirement, segments)
+
+    assert result["status"] == "matched"
+    assert result["evidence"]
+    assert any(
+        "python" in item["matched_terms"]
+        for item in result["evidence"]
+    )
+
+def test_single_term_matching_does_not_use_substring_matches():
+    segments = [
+        make_segment(
+            "Built CPython extensions for a high-performance runtime."
+        )
+    ]
+
+    assert find_clause_evidence("Python", segments) == []
