@@ -315,7 +315,7 @@ function OverviewTab({ result }: { result: AnalysisResult }) {
       <section className="panel analyzer-integrity">
         <CheckCircle2 size={18} />
         <div>
-          <b>Analysis saved successfully</b>
+          <b>Analysis completed successfully</b>
           <p>Run ID: {result.run_id}</p>
           <p>
             Scores reflect documented evidence, not candidate ability
