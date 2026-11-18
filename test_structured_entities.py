@@ -1,11 +1,12 @@
 
 import json
+import os
 import unittest
 from pathlib import Path
 
 from structured_entity_extractor import extract_work_experience
 
-RESULTS_DIR = Path("structured_results")
+RESULTS_DIR = Path(os.getenv("EVIDENCEFIRST_ENTITY_RESULTS_DIR", "structured_results"))
 
 PDF_RESULT = RESULTS_DIR / "Tejavarma Dommaraju(Resume)_entities.json"
 DOCX_RESULT = RESULTS_DIR / "Tejavarma Dommaraju_Resume_entities.json"
@@ -20,6 +21,12 @@ def load_result(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+@unittest.skipUnless(
+    os.getenv("EVIDENCEFIRST_ENTITY_RESULTS_DIR")
+    and PDF_RESULT.is_file()
+    and DOCX_RESULT.is_file(),
+    "Set EVIDENCEFIRST_ENTITY_RESULTS_DIR to run private entity-output integration tests.",
+)
 class TestStructuredResumeEntities(unittest.TestCase):
 
     @classmethod

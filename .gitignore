@@ -1,18 +1,52 @@
-# Python environment
+
+# Python environment and cache
 .venv/
+venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.coverage
+htmlcov/
 
-# Personal resume files
+# Node.js / React
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Personal resume documents
 *.pdf
 *.docx
 
-# Generated personal data
+# Candidate-specific inputs and generated analysis
+jd_inputs/
+jd_results/
 extraction_results/
 structured_results/
 
-# IDE and OS
+# IDE and operating system
 .vscode/
+.idea/
 .DS_Store
 Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+skill_dictionary_audit.txt
+
+candidate_runs/
+
+# Local backups and generated TypeScript metadata
+*.backup
+*_editor_backup.py
+*.tsbuildinfo
+
+# Private local integration fixtures and npm diagnostics
+private_resume_fixtures/
+npm-debug.log*

@@ -228,3 +228,51 @@ def test_manual_evidence_without_group_applies_to_single_group_only():
     assert group["status"] == "matched"
     assert group["manual_evidence_count"] == 1
 
+def test_missing_manual_confirmation_does_not_satisfy_single_evidence_group():
+    evaluation = {
+        "status": "partial",
+        "status_reason": "Related LLM evidence found, API integration not established.",
+        "evidence_strength": "partial",
+        "evidence_groups": [
+            {
+                "label": "Integrate external model APIs",
+                "status": "partial",
+                "satisfied": False,
+                "evidence_count": 1,
+                "evidence": [
+                    {"claim": "Developed AI agents on an internal LLM platform."}
+                ],
+                "manual_evidence": [],
+                "manual_evidence_count": 0,
+            }
+        ],
+        "evidence": [
+            {"claim": "Developed AI agents on an internal LLM platform."}
+        ],
+    }
+
+    manual_data = {
+        "TEST-API-001": {
+            "status": "missing",
+            "confirmation": "External API integration was not confirmed.",
+            "evidence": [
+                {
+                    "project": "Internal AI platform",
+                    "claim": "Used the platform interface; API integration not confirmed.",
+                }
+            ],
+        }
+    }
+
+    result = apply_manual_evidence(
+        evaluation, "TEST-API-001", manual_data
+    )
+
+    assert result["status"] == "partial"
+    assert result["resume_status"] == "partial"
+    assert result["manual_status"] == "missing"
+    assert result["evidence_groups"][0]["status"] == "partial"
+    assert result["evidence_groups"][0]["satisfied"] is False
+    assert result["evidence_groups"][0]["manual_evidence"] == []
+    assert len(result["manual_evidence"]) == 1
+

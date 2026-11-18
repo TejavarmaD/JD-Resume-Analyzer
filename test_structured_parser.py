@@ -1,19 +1,19 @@
 
-import sys
+import os
 import unittest
 from pathlib import Path
 
 from structured_resume_parser import extract_text, parse_resume
 
 
-RESUME_DIR = Path(
-    r"C:\Users\tejavarma.dommaraju\OneDrive - OneWorkplace\Desktop\Resume"
-)
-
+RESUME_DIR = Path(os.getenv("EVIDENCEFIRST_RESUME_FIXTURE_DIR", ""))
 RESUME_FILES = [
     RESUME_DIR / "Tejavarma Dommaraju(Resume).pdf",
     RESUME_DIR / "Tejavarma Dommaraju_Resume.docx",
 ]
+HAS_PRIVATE_RESUME_FIXTURES = bool(os.getenv("EVIDENCEFIRST_RESUME_FIXTURE_DIR")) and all(
+    path.is_file() for path in RESUME_FILES
+)
 
 EXPECTED_SECTIONS = {
     "EXECUTIVE SUMMARY",
@@ -25,6 +25,10 @@ EXPECTED_SECTIONS = {
 }
 
 
+@unittest.skipUnless(
+    HAS_PRIVATE_RESUME_FIXTURES,
+    "Set EVIDENCEFIRST_RESUME_FIXTURE_DIR to run private resume integration tests.",
+)
 class TestStructuredResumeParser(unittest.TestCase):
 
     def test_both_resume_files_exist(self):

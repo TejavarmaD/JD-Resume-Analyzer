@@ -1,14 +1,13 @@
 
 from pathlib import Path
+import os
 import re
 from difflib import SequenceMatcher
 
 from extract_documents import extract_docx, extract_pdf
 
 
-RESUME_DIR = Path(
-    r"C:\Users\tejavarma.dommaraju\OneDrive - OneWorkplace\Desktop\Resume"
-)
+RESUME_DIR = Path(os.getenv("EVIDENCEFIRST_RESUME_FIXTURE_DIR", "private_resume_fixtures"))
 
 PDF_FILE = RESUME_DIR / "Tejavarma Dommaraju(Resume).pdf"
 DOCX_FILE = RESUME_DIR / "Tejavarma Dommaraju_Resume.docx"
@@ -63,6 +62,13 @@ def extract_file(path: Path) -> tuple[str, int | None, list[int]]:
 
 
 def main() -> None:
+    if not PDF_FILE.is_file() or not DOCX_FILE.is_file():
+        raise FileNotFoundError(
+            "Private resume fixtures were not found. Set "
+            "EVIDENCEFIRST_RESUME_FIXTURE_DIR to a directory containing "
+            "the expected PDF and DOCX fixture files. Do not commit those files."
+        )
+
     OUTPUT_DIR.mkdir(exist_ok=True)
 
     results = {}

@@ -1564,55 +1564,440 @@ def evaluate_non_tag_requirement(requirement, segments):
     }
 
 
+
+# ---------------------------------------------------------
+# GENERIC, ROLE-AGNOSTIC REQUIREMENT EVALUATION
+# ---------------------------------------------------------
+
+GENERIC_REQUIREMENT_STOPWORDS = {
+    "a", "an", "the", "and", "or", "to", "of", "in", "on",
+    "for", "with", "by", "from", "at", "as", "is", "are",
+    "be", "been", "being", "this", "that", "these", "those",
+    "their", "your", "our", "its", "they", "them", "we",
+    "you", "will", "would", "should", "could", "can", "may",
+    "must", "have", "has", "had", "who", "which", "what",
+    "when", "where", "while", "including", "such", "both",
+    "across", "within", "through", "using", "use", "used",
+    "able", "ability", "strong", "good", "excellent",
+    "preferred", "required", "requirements", "responsible",
+    "responsibilities", "role", "roles", "work", "working",
+    "experience", "experiences", "knowledge", "understanding",
+    "familiarity", "proficiency", "proficient",
+}
+
+GENERIC_ACTION_PATTERN = re.compile(
+    r"\b(?:"
+    r"build|built|develop|developed|create|created|design|designed|"
+    r"implement|implemented|integrate|integrated|deploy|deployed|"
+    r"manage|managed|lead|led|own|owned|deliver|delivered|"
+    r"analyze|analysed|analyzed|evaluate|evaluated|"
+    r"prioritize|prioritise|prioritized|prioritised|"
+    r"plan|planned|execute|executed|conduct|conducted|"
+    r"coordinate|coordinated|produce|produced|"
+    r"operate|operated|maintain|maintained|"
+    r"monitor|monitored|optimize|optimise|optimized|optimised|"
+    r"automate|automated|test|tested|research|researched|"
+    r"report|reported|present|presented|support|supported|"
+    r"launch|launched|forecast|forecasted|"
+    r"negotiate|negotiated|administer|administered"
+    r")\b",
+    re.IGNORECASE,
+)
+
+PRACTICAL_REQUIREMENT_PATTERN = re.compile(
+    r"\b(?:"
+    r"hands[- ]on|practical experience|proven experience|"
+    r"demonstrated experience|experience in|experience with|"
+    r"responsible for|manage|lead|own|deliver|build|develop|"
+    r"implement|integrate|deploy|analyze|analyse|create|"
+    r"design|execute|conduct|coordinate|operate|maintain|"
+    r"produce|prioritize|plan|launch|administer"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def normalize_requirement_term(term):
+    """Normalize simple word variants for deterministic comparison."""
+    term = term.casefold()
+
+    if len(term) > 5 and term.endswith("ies"):
+        return term[:-3] + "y"
+
+    if len(term) > 6 and term.endswith("ized"):
+        return term[:-3] + "ize"
+
+    if len(term) > 5 and term.endswith("ied"):
+        return term[:-3] + "y"
+
+    if len(term) > 5 and term.endswith("ing"):
+        return term[:-3]
+
+    if len(term) > 4 and term.endswith("ed"):
+        return term[:-2]
+
+    if len(term) > 4 and term.endswith("s") and not term.endswith("ss"):
+        return term[:-1]
+
+    return term
+
+
+def extract_requirement_terms(text):
+    """Extract meaningful terms without assuming a particular profession."""
+    terms = re.findall(
+        r"[a-zA-Z][a-zA-Z0-9+#.-]*",
+        str(text or "").casefold(),
+    )
+
+    return {
+        normalize_requirement_term(term)
+        for term in terms
+        if (
+            len(term) > 2
+            and term not in GENERIC_REQUIREMENT_STOPWORDS
+        )
+    }
+
+
+def split_requirement_clauses(requirement_text):
+    """
+    Split compound requirements when a new action begins.
+    Avoid splitting ordinary phrases such as 'communication and teamwork'.
+    """
+    text = str(requirement_text or "").strip()
+
+    if not text:
+        return []
+
+    action_words = (
+        r"build|develop|create|design|implement|integrate|deploy|"
+        r"manage|lead|own|deliver|analyze|analyse|evaluate|"
+        r"prioritize|prioritise|plan|execute|conduct|coordinate|"
+        r"produce|operate|maintain|monitor|optimize|optimise|"
+        r"automate|test|research|report|present|support|launch"
+    )
+
+    split_pattern = re.compile(
+        r";|,\s*(?=(?:to\s+)?(?:" + action_words + r")\b)"
+        r"|\s+(?:and|as well as)\s+(?=(?:to\s+)?(?:"
+        + action_words + r")\b)",
+        re.IGNORECASE,
+    )
+
+    clauses = [
+        part.strip(" ,.-")
+        for part in split_pattern.split(text)
+        if part.strip(" ,.-")
+    ]
+
+    return clauses or [text]
+
+
+def find_clause_evidence(clause, segments):
+    """
+    Find source-backed sentence evidence using meaningful term overlap.
+    Every returned item retains its original resume section and offsets.
+    """
+    clause_terms = extract_requirement_terms(clause)
+
+    if not clause_terms:
+        return []
+
+    results = []
+
+    minimum_overlap = max(
+        2,
+        int(len(clause_terms) * 0.35 + 0.999),
+    )
+
+    for segment in segments:
+        source_text = segment["text"]
+        search_position = 0
+
+        for sentence in split_sentences(source_text):
+            sentence_start = source_text.find(
+                sentence,
+                search_position,
+            )
+
+            if sentence_start < 0:
+                continue
+
+            sentence_end = sentence_start + len(sentence)
+            search_position = sentence_end
+
+            sentence_terms = extract_requirement_terms(sentence)
+            overlap = clause_terms.intersection(sentence_terms)
+
+            if len(overlap) < minimum_overlap:
+                continue
+
+            results.append({
+                "matched_text": sentence,
+                "matched_terms": sorted(overlap),
+                "section": segment["section"],
+                "record": segment["record"],
+                "field": segment["field"],
+                "source_text": source_text,
+                "evidence": {
+                    "start": sentence_start,
+                    "end": sentence_end,
+                },
+            })
+
+    return results
+
+
+def evidence_has_action(item):
+    """Check for an action in the same sentence as the evidence."""
+    text = item.get("source_text", "")
+    start = item.get("evidence", {}).get("start", 0)
+    end = item.get("evidence", {}).get("end", 0)
+
+    for sentence in split_sentences(text):
+        sentence_start = text.find(sentence)
+
+        if sentence_start < 0:
+            continue
+
+        sentence_end = sentence_start + len(sentence)
+
+        if start < sentence_start or end > sentence_end:
+            continue
+
+        return bool(GENERIC_ACTION_PATTERN.search(sentence))
+
+    return False
+
+
+def deduplicate_evidence(items):
+    """Remove repeated evidence while preserving source information."""
+    unique = []
+    seen = set()
+
+    for item in items:
+        evidence_span = item.get("evidence", {})
+
+        key = (
+            item.get("section"),
+            item.get("record"),
+            item.get("field"),
+            evidence_span.get("start"),
+            evidence_span.get("end"),
+            item.get("matched_text"),
+        )
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        unique.append(item)
+
+    return unique
+
+
+def evaluate_generic_requirement(requirement, segments):
+    """
+    Evaluate any job requirement using its actual wording and resume evidence.
+
+    Dictionary tags are supporting evidence, not mandatory prerequisites.
+    Practical requirements need evidence from implementation sections
+    with an action in the same sentence.
+    """
+    requirement_text = requirement.get("requirement_text", "")
+
+    clauses = split_requirement_clauses(requirement_text)
+
+    if not clauses:
+        clauses = [requirement_text]
+
+    tags = get_requirement_tags(requirement)
+
+    evidence_by_tag = {
+        tag: find_tag_evidence(tag, segments)
+        for tag in tags
+    }
+
+    classified_by_tag = {
+        tag: classify_tag_evidence(evidence_by_tag[tag])
+        for tag in tags
+    }
+
+    tag_evidence = [
+        {"tag": tag, **item}
+        for tag in tags
+        for item in evidence_by_tag[tag]
+    ]
+
+    practical_expected = bool(
+        PRACTICAL_REQUIREMENT_PATTERN.search(requirement_text)
+    )
+
+    group_results = []
+    all_evidence = []
+
+    for index, clause in enumerate(clauses, start=1):
+        clause_terms = extract_requirement_terms(clause)
+
+        lexical_evidence = find_clause_evidence(
+            clause,
+            segments,
+        )
+
+        clause_tag_evidence = []
+
+        for tag, items in evidence_by_tag.items():
+            tag_terms = extract_requirement_terms(tag)
+
+            if clause_terms.intersection(tag_terms):
+                clause_tag_evidence.extend(
+                    {"tag": tag, **item}
+                    for item in items
+                )
+
+        clause_evidence = deduplicate_evidence(
+            lexical_evidence + clause_tag_evidence
+        )
+
+        # Tag mentions can establish relevance, but they cannot prove
+        # practical implementation of the specific requirement.
+        # Strong evidence must come from direct clause-level text.
+        strong_evidence = [
+            item
+            for item in lexical_evidence
+            if (
+                item.get("section") in IMPLEMENTATION_SECTIONS
+                and evidence_has_action(item)
+            )
+        ]
+
+        if not clause_evidence:
+            group_status = "missing"
+
+        elif practical_expected and not strong_evidence:
+            group_status = "partial"
+
+        else:
+            group_status = "matched"
+
+        label = clause[:100].strip() or f"Requirement part {index}"
+
+        group_results.append({
+            "label": label,
+            "status": group_status,
+            "satisfied": group_status == "matched",
+            "evidence_count": len(clause_evidence),
+            "evidence": clause_evidence,
+            "manual_evidence": [],
+            "manual_evidence_count": 0,
+        })
+
+        all_evidence.extend(clause_evidence)
+
+    all_evidence = deduplicate_evidence(all_evidence)
+
+    matched_count = sum(
+        group["status"] == "matched"
+        for group in group_results
+    )
+
+    partial_count = sum(
+        group["status"] == "partial"
+        for group in group_results
+    )
+
+    total_groups = len(group_results)
+
+    if total_groups and matched_count == total_groups:
+        status = "matched"
+        reason = (
+            "All requirement parts have supporting resume evidence "
+            "at the strength indicated by the requirement wording."
+        )
+        strength = (
+            "implementation"
+            if any(
+                item.get("section") in IMPLEMENTATION_SECTIONS
+                and evidence_has_action(item)
+                for item in all_evidence
+            )
+            else "documented_knowledge_or_qualification"
+        )
+
+    elif matched_count or partial_count:
+        status = "partial"
+        reason = (
+            f"{matched_count} of {total_groups} requirement parts "
+            "have sufficient evidence. Other parts are incomplete "
+            "or supported only by weaker evidence."
+        )
+        strength = "partial"
+
+    else:
+        status = "missing"
+        reason = (
+            "No sufficiently relevant resume evidence was found "
+            "for the requirement."
+        )
+        strength = "none"
+
+    matched_tags = sorted({
+        tag
+        for tag, result in classified_by_tag.items()
+        if result["implementation"] or result["knowledge"]
+    })
+
+    return {
+        "status": status,
+        "status_reason": reason,
+        "evidence_strength": strength,
+        "evaluation_method": "generic_requirement_evidence_matching",
+        "tag_coverage": {
+            "total_tags": len(tags),
+            "matched_tag_count": len(matched_tags),
+            "missing_tag_count": len(tags) - len(matched_tags),
+            "matched_tags": matched_tags,
+            "missing_tags": [
+                tag for tag in tags if tag not in matched_tags
+            ],
+            "implementation_tags": sorted({
+                tag
+                for tag, result in classified_by_tag.items()
+                if result["implementation"]
+            }),
+            "knowledge_only_tags": sorted({
+                tag
+                for tag, result in classified_by_tag.items()
+                if (
+                    result["knowledge"]
+                    and not result["implementation"]
+                )
+            }),
+        },
+        "evidence_groups": group_results,
+        "evidence": all_evidence,
+    }
+
+
 # ---------------------------------------------------------
 # MAIN REQUIREMENT ROUTER
 # ---------------------------------------------------------
 
 
 
-def evaluate_requirement(requirement, segments):
-    """Route each requirement to its strictest applicable evaluator."""
-    requirement_id = requirement.get("requirement_id")
 
-    policy_evaluation = evaluate_requirement_tag_policy(
+def evaluate_requirement(requirement, segments):
+    """
+    Use one role-agnostic evaluator for every live requirement.
+    Requirement IDs are identifiers, not evaluation instructions.
+    """
+    evaluation = evaluate_generic_requirement(
         requirement,
         segments,
     )
 
-    if policy_evaluation is not None:
-        evaluation = policy_evaluation
-
-    else:
-        special_evaluation = evaluate_special_requirement(
-            requirement,
-            segments,
-        )
-
-        if special_evaluation is not None:
-            evaluation = special_evaluation
-
-        elif requirement_id in NON_TAG_EVIDENCE_RULES:
-            evaluation = evaluate_non_tag_requirement(
-                requirement,
-                segments,
-            )
-
-        else:
-            tags = get_requirement_tags(requirement)
-
-            if tags:
-                evaluation = evaluate_tag_requirement(
-                    requirement,
-                    segments,
-                )
-            else:
-                evaluation = evaluate_non_tag_requirement(
-                    requirement,
-                    segments,
-                )
-
     return {
-        "requirement_id": requirement_id,
+        "requirement_id": requirement.get("requirement_id"),
         "requirement_text": requirement.get("requirement_text"),
         **evaluation,
         "unmatched_jd_terms_for_review": requirement.get(
@@ -1620,6 +2005,7 @@ def evaluate_requirement(requirement, segments):
             [],
         ),
     }
+
 
 
 # ---------------------------------------------------------
@@ -1691,7 +2077,9 @@ def apply_manual_evidence(evaluation, requirement_id, manual_data):
         # Apply evidence only to the group explicitly identified.
         # Apply manual evidence only to its explicitly identified group.
                 # Apply manual evidence only to its explicitly identified group.
-        for item in manual_items:
+        for item in (
+            manual_items if manual_status != "missing" else []
+        ):
             explicit_group_label = item.get("evidence_group")
             group_label = explicit_group_label
 

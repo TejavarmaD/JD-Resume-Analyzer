@@ -1,4 +1,3 @@
-
 import pytest
 
 from matching_score_engine import (
@@ -273,3 +272,26 @@ def test_calculate_alignment_uses_weighted_earned_points():
     assert result["total_weight"] == 4.0
     assert result["earned_weight"] == 2.5
     assert result["alignment_score"] == 62.5
+
+
+def test_all_requirements_matched_produces_full_alignment():
+    jd, tags, evidence, eligibility = make_inputs(status="matched")
+
+    output = build_output(jd, tags, evidence, eligibility)
+
+    assert output["alignment"]["alignment_score"] == 100.0
+    assert output["summary"]["matched"] == 1
+    assert output["summary"]["partial"] == 0
+    assert output["summary"]["missing"] == 0
+    assert output["critical_gaps"] == []
+
+
+def test_all_requirements_missing_produces_zero_alignment():
+    jd, tags, evidence, eligibility = make_inputs(status="missing")
+
+    output = build_output(jd, tags, evidence, eligibility)
+
+    assert output["alignment"]["alignment_score"] == 0.0
+    assert output["summary"]["matched"] == 0
+    assert output["summary"]["partial"] == 0
+    assert output["summary"]["missing"] == 1
